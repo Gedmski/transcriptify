@@ -3,7 +3,6 @@
 **Transcriptify** is a privacy-first, interactive transcript visualizer designed for UDST students. It transforms your unofficial PDF transcript into a beautiful, "Digital Chalkboard" dashboard, helping you analyze your academic performance, track trends, and simulate future GPA scenarios.
 
 ![Transcriptify Dashboard](./public/dashboard-preview.png)
-*(Note: Add a screenshot of the dashboard here if available, or remove this line)*
 
 ## ✨ Key Features
 

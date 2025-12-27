@@ -1,36 +1,74 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Transcriptify 🎓📊
 
-## Getting Started
+**Transcriptify** is a privacy-first, interactive transcript visualizer designed for UDST students. It transforms your unofficial PDF transcript into a beautiful, "Digital Chalkboard" dashboard, helping you analyze your academic performance, track trends, and simulate future GPA scenarios.
 
-First, run the development server:
+![Transcriptify Dashboard](./public/dashboard-preview.png)
+*(Note: Add a screenshot of the dashboard here if available, or remove this line)*
+
+## ✨ Key Features
+
+*   **🔒 Privacy First**: Your transcript is processed 100% in your browser. No data is ever sent to a server.
+*   **🎨 Digital Chalkboard Aesthetic**: A unique, hand-crafted UI featuring "Patrick Hand" and "JetBrains Mono" typography, chalk textures, and smooth "dust-off" transitions.
+*   **📈 Interactive Analytics**:
+    *   **GPA Trend Graph**: Watch your CGPA and Term GPA get "drawn" on the board.
+    *   **Subject Radar**: Visualize your strengths across different subject areas (Core AI, Math, Computer Science, etc.).
+    *   **Grade Distribution**: Analyze your grade spread by count or credits, with detailed course lists on hover.
+*   **🔮 GPA Simulator**: A "What-If" tool to calculate how future grades will impact your cumulative GPA.
+*   **🔍 Global Filtering**: Filter the entire dashboard by Year and Term to focus on specific academic periods.
+*   **📝 Smart Course List**: Searchable history with a built-in "Resume Bullet" generator for your CV.
+
+## 🛠️ Tech Stack
+
+*   **Framework**: [Next.js 15](https://nextjs.org/) (App Router)
+*   **Styling**: [Tailwind CSS](https://tailwindcss.com/) with custom configuration
+*   **Animations**: [Framer Motion](https://www.framer.com/motion/) & [GSAP](https://greensock.com/gsap/)
+*   **Charts**: [Recharts](https://recharts.org/)
+*   **PDF Parsing**: [pdfjs-dist](https://mozilla.github.io/pdf.js/)
+*   **Icons**: [Lucide React](https://lucide.dev/)
+*   **Fonts**: [Patrick Hand](https://fonts.google.com/specimen/Patrick+Hand) & [JetBrains Mono](https://fonts.google.com/specimen/JetBrains+Mono)
+
+## 🚀 Getting Started
+
+First, install the dependencies:
+
+```bash
+npm install
+# or
+yarn install
+```
+
+Then, run the development server:
 
 ```bash
 npm run dev
 # or
 yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 📂 Project Structure
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+*   `app/`: Next.js App Router pages and layouts.
+    *   `page.tsx`: Main dashboard logic and state management.
+    *   `globals.css`: Global styles, including the chalkboard texture and custom variables.
+*   `components/`: Reusable UI components.
+    *   `dashboard/`: Dashboard-specific widgets (TrendGraph, SubjectRadar, etc.).
+    *   `ui/`: Generic UI elements (Card, Button, Input) with chalkboard styling.
+*   `utils/`: Helper functions.
+    *   `transcript-parser.ts`: Logic for parsing PDF text into structured Course objects and calculating stats.
 
-## Learn More
+## 📝 Usage
 
-To learn more about Next.js, take a look at the following resources:
+1.  **Export your Transcript**: Log in to your student portal and download your "Unofficial Transcript" as a PDF.
+2.  **Upload**: Drag and drop the PDF into the landing zone on Transcriptify.
+3.  **Analyze**: Explore your data! Use the filters at the top of the course list to slice and dice your academic history.
+4.  **Simulate**: Use the "GPA Simulator" card to see what grades you need to hit your target GPA.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 🤝 Contributing
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Contributions are welcome! Please feel free to submit a Pull Request.
 
-## Deploy on Vercel
+## 📄 License
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+This project is open-source and available under the [MIT License](LICENSE).

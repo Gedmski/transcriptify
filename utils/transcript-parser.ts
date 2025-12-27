@@ -144,19 +144,105 @@ export function calculateGradeDistribution(courses: Course[]) {
 }
 
 export const SUBJECT_MAP: Record<string, string> = {
-    DSAI: "Core AI",
-    INFS: "Comp Sci",
-    COMP: "Comp Sci",
-    INFT: "Hardware/Net",
-    MATH: "Math",
-    DACS: "Math",
-    COMM: "General",
-    BUSG: "General",
-    ECON: "General",
-    SSHA: "General",
-    SCIE: "General",
-    EFFL: "General"
+    // ============================================
+    // 1. TECH & AI (The "Logic" Spoke)
+    // ============================================
+    DSAI: "Tech & AI",   // Data Science & AI
+    INFS: "Tech & AI",   // Information Systems
+    INFT: "Tech & AI",   // Info Tech (Hardware/Net)
+    COMP: "Tech & AI",   // Computing / Practicum
+    DACS: "Tech & AI",   // Data & Cyber Security
+    AICC: "Tech & AI",   // AI & Cognitive Computing (Masters)
+    MISY: "Tech & AI",   // Management Info Systems
+
+    // ============================================
+    // 2. ENGINEERING (The "Build" Spoke)
+    // ============================================
+    // AE** = Applied Engineering Series
+    AEAC: "Engineering", // Air Conditioning / HVAC
+    AECE: "Engineering", // Civil Engineering
+    AECH: "Engineering", // Chemical Engineering
+    AEEL: "Engineering", // Electrical Engineering
+    AEEP: "Engineering", // Electrical Power
+    AEMA: "Engineering", // Maintenance / Mechanical
+    AEMR: "Engineering", // Marine Engineering
+    AETN: "Engineering", // Telecommunications
+    FENG: "Engineering", // Foundation Engineering
+    FTEN: "Engineering", // Foundation Tech
+    AVMG: "Engineering", // Aviation Management
+    MADC: "Engineering", // Master of Applied Design/Construction
+
+    // ============================================
+    // 3. BUSINESS (The "Strategy" Spoke)
+    // ============================================
+    ACCT: "Business",    // Accounting
+    BKFT: "Business",    // Banking & FinTech
+    BUSG: "Business",    // General Business
+    ECON: "Business",    // Economics
+    HCMT: "Business",    // Healthcare Management
+    HRMG: "Business",    // Human Resources
+    LSCM: "Business",    // Logistics & Supply Chain
+    MGMT: "Business",    // Management
+    MRKT: "Business",    // Marketing
+
+    // ============================================
+    // 4. HEALTH SCIENCES (The "Care" Spoke)
+    // ============================================
+    // HS** = Health Sciences Series
+    HSDH: "Health",      // Dental Hygiene
+    HSEH: "Health",      // Environmental Health
+    HSHG: "Health",      // Health General/Hygiene
+    HSMR: "Health",      // Medical Radiography
+    HSOH: "Health",      // Occupational Health
+    HSPA: "Health",      // Paramedicine / Pharmacy
+    HSPT: "Health",      // Physiotherapy
+    HSRT: "Health",      // Respiratory Therapy
+    NURS: "Health",      // Nursing
+    NUPN: "Health",      // Practical Nursing
+    NUMW: "Health",      // Midwifery
+    HMED: "Health",      // Health Medical Foundations
+    FBIO: "Health",      // Foundation Biology
+    FCHE: "Health",      // Foundation Chemistry
+
+    // ============================================
+    // 5. MATH & SCIENCE (The "Quant" Spoke)
+    // ============================================
+    MATH: "Math/Sci",    // Mathematics
+    PHYS: "Math/Sci",    // Physics
+    CHEM: "Math/Sci",    // Chemistry
+    BIOL: "Math/Sci",    // Biology
+    SCIE: "Math/Sci",    // General Science
+    FMAT: "Math/Sci",    // Foundation Math
+    HMAT: "Math/Sci",    // Health Math
+
+    // ============================================
+    // 6. GENERAL & SOFT SKILLS (The "Core" Spoke)
+    // ============================================
+    ACAD: "General",     // Academic Skills
+    RSST: "General",     // Research Studies
+    COMM: "General",     // Communication (Standard)
+    ENGL: "General",     // English (Standard)
+    HIST: "General",     // History (Standard)
+    SSHA: "General",     // Social Sciences
+    EFFL: "General",     // Effective Learning
 };
+
+// Robust Helper Function
+export function getSubjectCategory(code: string): string {
+    // 1. Handle standard format "DSAI 3201"
+    const prefix = code.split(' ')[0].trim().toUpperCase();
+
+    // 2. Direct Lookup
+    if (SUBJECT_MAP[prefix]) {
+        return SUBJECT_MAP[prefix];
+    }
+
+    // 3. Smart Fallbacks for unknown codes
+    if (prefix.startsWith('AE')) return "Engineering"; // Catch-all for new Engineering codes
+    if (prefix.startsWith('HS')) return "Health";      // Catch-all for new Health codes
+
+    return "General"; // Default fallback
+}
 
 export function calculateSubjectStats(courses: Course[]) {
     const subjects: Record<string, { points: number; credits: number; courses: string[] }> = {};

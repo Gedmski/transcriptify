@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Patrick_Hand, JetBrains_Mono } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next"
 import "./globals.css";
 
 const patrickHand = Patrick_Hand({
@@ -29,6 +30,7 @@ export default function RootLayout({
         className={`${patrickHand.variable} ${jetbrainsMono.variable} antialiased`}
       >
         {children}
+        <Analytics />
       </body>
     </html>
   );

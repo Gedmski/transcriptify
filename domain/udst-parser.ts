@@ -78,7 +78,7 @@ export function parseUdSTTranscript(rawText: string): TranscriptDocument {
   }
 
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     institutionId: 'udst',
     adapterVersion: 'udst-2026.1',
     importedAt: new Date().toISOString(),

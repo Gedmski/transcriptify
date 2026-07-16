@@ -1,31 +1,9 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { cleanText, extractPlanRequirements, extractRequiredCredits, flattenCourses, slugify } from './udst-plan-parser.mjs'
 
 const BASE_URL = 'https://www.udst.edu.qa'
 const OUTPUT = path.resolve(process.cwd(), 'data', 'udst-programs.json')
-
-const decodeHtml = (value) => value
-  .replace(/&nbsp;/gi, ' ')
-  .replace(/&amp;/gi, '&')
-  .replace(/&quot;/gi, '"')
-  .replace(/&#039;|&apos;/gi, "'")
-  .replace(/&ndash;|&#8211;/gi, '\u2013')
-  .replace(/&mdash;|&#8212;/gi, '\u2014')
-  .replace(/&lt;/gi, '<')
-  .replace(/&gt;/gi, '>')
-  .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
-
-const cleanText = (value = '') => decodeHtml(value
-  .replace(/<br\s*\/?>/gi, ' / ')
-  .replace(/<[^>]+>/g, ' ')
-  .replace(/\s+/g, ' ')
-  .trim())
-
-const slugify = (value) => value
-  .toLowerCase()
-  .replace(/&/g, ' and ')
-  .replace(/[^a-z0-9]+/g, '-')
-  .replace(/^-|-$/g, '')
 
 async function fetchHtml(url) {
   const response = await fetch(url, {
@@ -93,46 +71,6 @@ function extractHistoricalPlanLinks(html) {
   return [...new Map(links.map((link) => [link.version, link])).values()]
 }
 
-function extractCourses(html) {
-  const rows = [...html.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)]
-  const courses = []
-  let semester = 'Program requirement'
-  for (const [, row] of rows) {
-    const cells = [...row.matchAll(/<(?:td|th)[^>]*>([\s\S]*?)<\/(?:td|th)>/gi)]
-      .map((match) => cleanText(match[1]))
-      .filter(Boolean)
-    if (cells.length === 1 && /semester\s+\d+|work term|clinical/i.test(cells[0])) {
-      semester = cells[0]
-      continue
-    }
-    if (cells.length < 5) continue
-    const code = cells[0].replace(/\s+/g, '').toUpperCase()
-    if (!/^[A-Z]{2,8}\d{3,4}[A-Z]?$/.test(code)) continue
-    const creditIndex = cells.findIndex((cell, index) => index >= 4 && /^\d+(?:\.\d+)?$/.test(cell))
-    const credits = creditIndex >= 0 ? Number(cells[creditIndex]) : 0
-    courses.push({
-      code,
-      title: cells[1],
-      prerequisite: cells[2] && cells[2] !== '-' ? cells[2] : null,
-      corequisite: cells[3] && cells[3] !== '-' ? cells[3] : null,
-      credits,
-      semester,
-    })
-  }
-  const unique = new Map()
-  for (const course of courses) {
-    const key = `${course.code}|${course.title}|${course.prerequisite}|${course.corequisite}`
-    if (!unique.has(key)) unique.set(key, course)
-  }
-  return [...unique.values()]
-}
-
-function extractRequiredCredits(html) {
-  const text = cleanText(html)
-  const match = text.match(/(?:B\.?\s*Sc\.?[^.]{0,24}\s+)?Program Total:?\s+(\d+(?:\.\d+)?)/i)
-  return match ? Number(match[1]) : null
-}
-
 async function mapWithConcurrency(items, limit, mapper) {
   const results = new Array(items.length)
   let cursor = 0
@@ -148,16 +86,19 @@ async function mapWithConcurrency(items, limit, mapper) {
 
 async function buildPlan(program, version, sourceUrl, html) {
   const planHtml = html || await fetchHtml(sourceUrl)
-  const courses = extractCourses(planHtml)
+  const id = `${program.id}-${version}`
+  const requirements = extractPlanRequirements(planHtml, id)
+  const courses = flattenCourses(requirements)
   const listedCredits = courses.reduce((sum, course) => sum + course.credits, 0)
   const requiredCredits = extractRequiredCredits(planHtml)
   return {
-    id: `${program.id}-${version}`,
+    id,
     version,
     sourceUrl,
     requiredCredits,
     totalListedCredits: listedCredits,
     courses,
+    requirements,
   }
 }
 
@@ -208,7 +149,7 @@ async function main() {
   })
 
   const output = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     institution: 'University of Doha for Science and Technology',
     updatedAt: new Date().toISOString(),
     directorySource: `${BASE_URL}/admissions/all-programs`,

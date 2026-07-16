@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
-import { Patrick_Hand, JetBrains_Mono } from "next/font/google";
-import { Analytics } from "@vercel/analytics/next"
+import { IBM_Plex_Sans, JetBrains_Mono, Patrick_Hand } from "next/font/google";
 import "./globals.css";
 
 const patrickHand = Patrick_Hand({
@@ -14,9 +13,15 @@ const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
 });
 
+const ibmPlexSans = IBM_Plex_Sans({
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-plex",
+  subsets: ["latin"],
+});
+
 export const metadata: Metadata = {
-  title: "Transcriptify",
-  description: "Student Transcript Dashboard",
+  title: "Transcriptify — UDST Academic Planner",
+  description: "Private, program-aware transcript analysis and academic planning for UDST students.",
 };
 
 export default function RootLayout({
@@ -27,10 +32,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${patrickHand.variable} ${jetbrainsMono.variable} antialiased`}
+        className={`${patrickHand.variable} ${jetbrainsMono.variable} ${ibmPlexSans.variable} antialiased`}
       >
         {children}
-        <Analytics />
       </body>
     </html>
   );

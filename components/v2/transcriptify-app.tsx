@@ -19,6 +19,7 @@ import {
   Plus,
   Printer,
   RefreshCcw,
+  Route,
   RotateCcw,
   ShieldCheck,
   Sparkles,
@@ -29,6 +30,7 @@ import {
 } from 'lucide-react'
 import { parseUdSTTranscript } from '@/domain/udst-parser'
 import {
+  AcademicPlan,
   CourseAttempt,
   GRADE_POINTS,
   TranscriptDocument,
@@ -39,8 +41,12 @@ import {
   normalizeGrade,
   reconcileRepeats,
   solveTargetCgpa,
+  migrateTranscriptDocument,
 } from '@/domain/transcript'
 import { ProgramDataset, ProgramPlan, UdSTProgram, programProgress, selectProgramPlan } from '@/domain/programs'
+import { academicPlanKey, buildAcademicTimeline, calculatePlanProjection, createAcademicPlan, remainingProgramCredits } from '@/domain/planning'
+import { AcademicTimeline, CourseFamilyRadar, CourseGradePlanner, DetailedAcademicReport } from './academic-analytics'
+import { TermPicker } from './term-combobox'
 
 type View = 'overview' | 'courses' | 'plan' | 'report' | 'privacy'
 type PersistenceMode = 'session' | 'device' | 'clear-after-export'
@@ -73,7 +79,7 @@ function createDemoDocument(): TranscriptDocument {
     },
   })))
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     institutionId: 'udst',
     adapterVersion: 'udst-2026.1',
     importedAt: new Date().toISOString(),
@@ -127,8 +133,8 @@ export function TranscriptifyApp() {
     const saved = localStorage.getItem(STORAGE_KEY)
     if (saved) {
       try {
-        const parsed = JSON.parse(saved) as TranscriptDocument
-        if (parsed.schemaVersion === 2 && Array.isArray(parsed.attempts)) {
+        const parsed = migrateTranscriptDocument(JSON.parse(saved))
+        if (parsed) {
           setTranscript(parsed)
           setStage('dashboard')
         }
@@ -164,9 +170,26 @@ export function TranscriptifyApp() {
     )
     : null
   const selectedPlan = planSelection?.plan
+  const activePlanKey = selectedProgram && selectedPlan ? academicPlanKey(selectedProgram.id, selectedPlan.version) : undefined
+  const academicPlan = useMemo(() => {
+    if (!selectedProgram || !selectedPlan || !transcript) return undefined
+    const existing = activePlanKey ? transcript.academicPlans?.[activePlanKey] : undefined
+    return createAcademicPlan(selectedProgram.id, selectedPlan, transcript.attempts, existing)
+  }, [activePlanKey, selectedPlan, selectedProgram, transcript])
   const degreeProgress = useMemo(
-    () => selectedPlan && transcript ? programProgress(selectedPlan, transcript.attempts) : null,
-    [selectedPlan, transcript],
+    () => selectedPlan && transcript ? programProgress(selectedPlan, transcript.attempts, academicPlan) : null,
+    [academicPlan, selectedPlan, transcript],
+  )
+  const automaticFutureCredits = degreeProgress
+    ? remainingProgramCredits(degreeProgress.requiredCredits, degreeProgress.completedCredits)
+    : null
+  const timeline = useMemo(
+    () => selectedPlan && transcript && academicPlan ? buildAcademicTimeline(selectedPlan, transcript.attempts, academicPlan) : undefined,
+    [academicPlan, selectedPlan, transcript],
+  )
+  const planProjection = useMemo(
+    () => selectedPlan && transcript && academicPlan ? calculatePlanProjection(stats, selectedPlan, transcript.attempts, academicPlan) : undefined,
+    [academicPlan, selectedPlan, stats, transcript],
   )
   const target = useMemo(() => solveTargetCgpa(stats, targetCgpa, futureCredits), [stats, targetCgpa, futureCredits])
   const filteredAttempts = useMemo(() => {
@@ -177,7 +200,36 @@ export function TranscriptifyApp() {
     ) ?? []
   }, [search, transcript])
 
+  useEffect(() => {
+    if (!transcript || !academicPlan || !activePlanKey || transcript.academicPlans?.[activePlanKey]) return
+    setTranscript((current) => current ? {
+      ...current,
+      academicPlans: { ...(current.academicPlans ?? {}), [activePlanKey]: academicPlan },
+    } : current)
+  }, [academicPlan, activePlanKey, transcript])
+
+  useEffect(() => {
+    if (automaticFutureCredits === null) return
+    setFutureCredits(automaticFutureCredits)
+  }, [activePlanKey, automaticFutureCredits])
+
   const persistTranscript = (next: TranscriptDocument) => setTranscript(next)
+
+  const persistAcademicPlan = (nextPlan: AcademicPlan) => {
+    if (!transcript) return
+    const key = academicPlanKey(nextPlan.programId, nextPlan.planVersion)
+    persistTranscript({ ...transcript, academicPlans: { ...(transcript.academicPlans ?? {}), [key]: { ...nextPlan, updatedAt: new Date().toISOString() } } })
+  }
+
+  const updatePlanEntry = (entryId: string, patch: Partial<{ courseCode: string; plannedTerm: string; expectedGrade: string }>) => {
+    if (!academicPlan) return
+    persistAcademicPlan({ ...academicPlan, entries: academicPlan.entries.map((entry) => entry.id === entryId ? { ...entry, ...patch } : entry) })
+  }
+
+  const updatePlanStartTerm = (startTerm: string) => {
+    if (!academicPlan) return
+    persistAcademicPlan({ ...academicPlan, startTerm })
+  }
 
   const handleFile = async (file: File) => {
     setError('')
@@ -319,7 +371,7 @@ export function TranscriptifyApp() {
 
   const exportJson = () => {
     if (!transcript) return
-    downloadFile('transcriptify-data.json', JSON.stringify({ schemaVersion: 2, transcript, program: selectedProgram?.name, studyPlan: selectedPlan?.version }, null, 2), 'application/json')
+    downloadFile('transcriptify-data.json', JSON.stringify({ schemaVersion: 3, transcript, program: selectedProgram?.name, studyPlan: selectedPlan?.version }, null, 2), 'application/json')
     if (persistence === 'clear-after-export') clearAll()
   }
 
@@ -446,16 +498,16 @@ export function TranscriptifyApp() {
           <button className="text-button" onClick={() => setStage('review')}><RefreshCcw size={16} /> Review import</button>
         </div>
       </aside>
-      <main className="dashboard-main">
+      <main className={`dashboard-main view-${view}`}>
         <header className="dashboard-header">
           <div><p className="eyebrow">Academic workspace</p><h1>{view === 'overview' ? 'Your academic position' : view === 'courses' ? 'Verified course history' : view === 'plan' ? 'Build a realistic path' : view === 'report' ? 'Program-aware report' : 'Your data, your decision'}</h1></div>
           <div className="header-actions"><span className="privacy-badge"><LockKeyhole size={15} /> Local session</span><button className="icon-button danger" aria-label="Delete all data" onClick={clearAll}><Trash2 size={18} /></button></div>
         </header>
 
         {view === 'overview' && <Overview stats={stats} terms={terms} attempts={transcript.attempts} selectedProgram={selectedProgram} selectedPlan={selectedPlan} degreeProgress={degreeProgress} onPlan={() => setView('plan')} onProgram={() => setView('report')} />}
-        {view === 'courses' && <CoursesView attempts={filteredAttempts} search={search} setSearch={setSearch} />}
-        {view === 'plan' && <PlanView stats={stats} targetCgpa={targetCgpa} setTargetCgpa={setTargetCgpa} futureCredits={futureCredits} setFutureCredits={setFutureCredits} target={target} selectedProgram={selectedProgram} selectedPlan={selectedPlan} progress={degreeProgress} />}
-        {view === 'report' && <ReportView stats={stats} transcript={transcript} programs={programs} selectedProgram={selectedProgram} selectedPlan={selectedPlan} planSelection={planSelection} progress={degreeProgress} programQuery={programQuery} setProgramQuery={setProgramQuery} setProgram={setProgram} setPlanVersion={setPlanVersion} useRecommendedPlan={useRecommendedPlan} exportCsv={exportCsv} exportJson={exportJson} />}
+        {view === 'courses' && <CoursesView attempts={filteredAttempts} allAttempts={transcript.attempts} search={search} setSearch={setSearch} selectedPlan={selectedPlan} academicPlan={academicPlan} timeline={timeline} updatePlanStartTerm={updatePlanStartTerm} />}
+        {view === 'plan' && <PlanView stats={stats} attempts={transcript.attempts} targetCgpa={targetCgpa} setTargetCgpa={setTargetCgpa} futureCredits={futureCredits} setFutureCredits={setFutureCredits} automaticFutureCredits={automaticFutureCredits} target={target} selectedProgram={selectedProgram} selectedPlan={selectedPlan} progress={degreeProgress} academicPlan={academicPlan} updatePlanEntry={updatePlanEntry} />}
+        {view === 'report' && <ReportView stats={stats} transcript={transcript} programs={programs} selectedProgram={selectedProgram} selectedPlan={selectedPlan} planSelection={planSelection} progress={degreeProgress} timeline={timeline} projection={planProjection} programQuery={programQuery} setProgramQuery={setProgramQuery} setProgram={setProgram} setPlanVersion={setPlanVersion} useRecommendedPlan={useRecommendedPlan} exportCsv={exportCsv} exportJson={exportJson} />}
         {view === 'privacy' && <PrivacyView persistence={persistence} setPersistence={setPersistence} exportCsv={exportCsv} exportJson={exportJson} clearAll={clearAll} />}
       </main>
       <nav className="mobile-nav" aria-label="Mobile navigation">
@@ -476,6 +528,34 @@ function NavButton({ active, icon, label, onClick }: { active: boolean; icon: Re
   return <button className={`nav-button ${active ? 'active' : ''}`} onClick={onClick}>{icon}<span>{label}</span></button>
 }
 
+function FamilyCoursesDialog({ prefix, gpa, attempts, onClose }: { prefix: string; gpa: number; attempts: CourseAttempt[]; onClose: () => void }) {
+  const dialogRef = useRef<HTMLDialogElement>(null)
+
+  useEffect(() => {
+    dialogRef.current?.showModal()
+  }, [])
+
+  return <dialog className="family-course-dialog" ref={dialogRef} aria-labelledby={`family-dialog-${prefix}`} onClose={onClose} onKeyDown={(event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.currentTarget.close()
+    }
+  }} onMouseDown={(event) => {
+    if (event.target === event.currentTarget) event.currentTarget.close()
+  }}>
+    <section className="family-dialog-sheet" onMouseDown={(event) => event.stopPropagation()}>
+      <header><div><p className="eyebrow">Course-family ledger</p><h2 id={`family-dialog-${prefix}`}>{prefix} courses</h2><span>{attempts.length} GPA-bearing course{attempts.length === 1 ? '' : 's'} · {gpa.toFixed(2)} family GPA</span></div><button type="button" aria-label={`Close ${prefix} course list`} onClick={() => dialogRef.current?.close()}><X size={20} /></button></header>
+      <ul className="family-course-ledger">
+        {attempts.map((attempt) => <li key={attempt.id}>
+          <div><strong>{attempt.fullCode}</strong><span>{attempt.title}</span><small>{attempt.term} · {attempt.credits.toFixed(1)} credits</small></div>
+          <span className="family-grade" aria-label={`Grade ${attempt.grade}`}>{attempt.grade}</span>
+        </li>)}
+      </ul>
+      <footer>Only GPA-bearing attempts included in this family average are shown.</footer>
+    </section>
+  </dialog>
+}
+
 function Overview({ stats, terms, attempts, selectedProgram, selectedPlan, degreeProgress, onPlan, onProgram }: {
   stats: ReturnType<typeof calculateStats>
   terms: ReturnType<typeof calculateTermStats>
@@ -491,6 +571,9 @@ function Overview({ stats, terms, attempts, selectedProgram, selectedPlan, degre
   const delta = latest && previous ? latest.cgpa - previous.cgpa : 0
   const standing = stats.cgpa >= 2 ? 'Clear standing range' : 'Below clear-standing threshold'
   const prefixStats = calculatePrefixStats(attempts)
+  const [openFamily, setOpenFamily] = useState<string | null>(null)
+  const openFamilyStats = prefixStats.find((subject) => subject.prefix === openFamily)
+  const openFamilyAttempts = attempts.filter((attempt) => attempt.code === openFamily && attempt.includedInGpa && attempt.gradePoints !== null)
   return <>
     <section className="metric-grid">
       <article className="metric-card hero-metric"><span>Overall CGPA</span><strong>{stats.cgpa.toFixed(2)}<small>/ 4.00</small></strong><p><CheckCircle2 size={16} /> {standing}</p><details><summary>Show the chalkwork</summary><div>Σ quality points ({stats.qualityPoints.toFixed(2)}) ÷ GPA credits ({stats.totalCredits.toFixed(1)}). Non-calculable grades and lower repeat attempts are excluded.</div></details></article>
@@ -510,58 +593,107 @@ function Overview({ stats, terms, attempts, selectedProgram, selectedPlan, degre
     </section>
     <section className="panel subject-panel">
       <div className="panel-heading"><div><p className="eyebrow">Course-family breakdown</p><h2>Where your grades actually come from</h2></div><span className="chalk-annotation">prefix by prefix ↘</span></div>
-      {prefixStats.length ? <div className="subject-grid">{prefixStats.map((subject, index) => (
-        <article className={`subject-card subject-${index % 4}`} key={subject.prefix}>
-          <div className="subject-card-top"><strong>{subject.prefix}</strong><span>{subject.gpa.toFixed(2)}</span></div>
-          <div className="chalk-progress" aria-label={`${subject.prefix} GPA ${subject.gpa.toFixed(2)} out of 4`}><i style={{ width: `${subject.gpa / 4 * 100}%` }} /></div>
-          <p>{subject.courses} course{subject.courses === 1 ? '' : 's'} · {subject.credits.toFixed(1)} GPA credits</p>
-          <small className={subject.delta >= 0 ? 'positive' : 'negative'}>{subject.delta >= 0 ? '+' : ''}{subject.delta.toFixed(2)} vs your CGPA {!subject.sufficient && '· early signal'}</small>
-        </article>
-      ))}</div> : <div className="empty-state"><BookOpen size={32} /><h3>No GPA-bearing course families yet</h3></div>}
+      {prefixStats.length >= 3 && <CourseFamilyRadar attempts={attempts} overallGpa={stats.cgpa} />}
+      {prefixStats.length ? <div className="subject-grid">{prefixStats.map((subject, index) => <article className={`subject-card subject-${index % 4}`} key={subject.prefix}>
+        <div className="subject-card-top"><strong>{subject.prefix}</strong><span>{subject.gpa.toFixed(2)}</span></div>
+        <div className="chalk-progress" aria-label={`${subject.prefix} GPA ${subject.gpa.toFixed(2)} out of 4`}><i style={{ width: `${subject.gpa / 4 * 100}%` }} /></div>
+        <p>{subject.courses} course{subject.courses === 1 ? '' : 's'} · {subject.credits.toFixed(1)} GPA credits</p>
+        <small className={subject.delta >= 0 ? 'positive' : 'negative'}>{subject.delta >= 0 ? '+' : ''}{subject.delta.toFixed(2)} vs your CGPA {!subject.sufficient && '· early signal'}</small>
+        <button type="button" className="subject-card-action" aria-haspopup="dialog" onClick={() => setOpenFamily(subject.prefix)}>View courses <ChevronRight size={15} /></button>
+      </article>)}</div> : <div className="empty-state"><BookOpen size={32} /><h3>No GPA-bearing course families yet</h3></div>}
     </section>
+    {openFamilyStats && <FamilyCoursesDialog prefix={openFamilyStats.prefix} gpa={openFamilyStats.gpa} attempts={openFamilyAttempts} onClose={() => setOpenFamily(null)} />}
   </>
 }
 
-function CoursesView({ attempts, search, setSearch }: { attempts: CourseAttempt[]; search: string; setSearch: (value: string) => void }) {
-  const [prefix, setPrefix] = useState('ALL')
-  const prefixes = [...new Set(attempts.map((attempt) => attempt.code))].sort()
-  const visibleAttempts = prefix === 'ALL' ? attempts : attempts.filter((attempt) => attempt.code === prefix)
-  return <section className="panel courses-panel">
+function CoursesView({ attempts, allAttempts, search, setSearch, selectedPlan, academicPlan, timeline, updatePlanStartTerm }: {
+  attempts: CourseAttempt[]
+  allAttempts: CourseAttempt[]
+  search: string
+  setSearch: (value: string) => void
+  selectedPlan?: ProgramPlan
+  academicPlan?: AcademicPlan
+  timeline?: ReturnType<typeof buildAcademicTimeline>
+  updatePlanStartTerm: (value: string) => void
+}) {
+  const [mode, setMode] = useState<'timeline' | 'attempts'>('timeline')
+  const [filters, setFilters] = useState({ course: '', termName: '', termYear: '', credits: '', grade: '', gpaStatus: '' })
+  const courseCodeOptions = [...new Set(allAttempts.map((attempt) => attempt.code))].sort((a, b) => a.localeCompare(b))
+  const termParts = allAttempts.map((attempt) => {
+    const [name, year] = attempt.term.trim().split(/\s+(?=\d{4}$)/)
+    return { name, year }
+  })
+  const termNameOrder = new Map(['Fall', 'Winter', 'Spring', 'Summer'].map((name, index) => [name, index]))
+  const termNameOptions = [...new Set(termParts.map(({ name }) => name))].sort((a, b) => (termNameOrder.get(a) ?? 999) - (termNameOrder.get(b) ?? 999) || a.localeCompare(b))
+  const termYearOptions = [...new Set(termParts.map(({ year }) => year).filter(Boolean))].sort((a, b) => Number(a) - Number(b))
+  const creditOptions = [...new Set(allAttempts.map((attempt) => attempt.credits.toFixed(1)))].sort((a, b) => Number(a) - Number(b))
+  const gradeOrder = new Map(gradeOptions.map((grade, index) => [grade, index]))
+  const gradeFilterOptions = [...new Set(allAttempts.map((attempt) => attempt.grade))].sort((a, b) => (gradeOrder.get(a) ?? 999) - (gradeOrder.get(b) ?? 999) || a.localeCompare(b))
+  const visibleAttempts = attempts.filter((attempt) =>
+    (!filters.course || attempt.code === filters.course)
+    && (!filters.termName || attempt.term.startsWith(`${filters.termName} `))
+    && (!filters.termYear || attempt.term.endsWith(` ${filters.termYear}`))
+    && (!filters.credits || attempt.credits.toFixed(1) === filters.credits)
+    && (!filters.grade || attempt.grade === filters.grade)
+    && (!filters.gpaStatus || (filters.gpaStatus === 'included' ? attempt.includedInGpa : !attempt.includedInGpa)),
+  )
+  const activeFilterCount = Object.values(filters).filter(Boolean).length
+  const setFilter = (key: keyof typeof filters, value: string) => setFilters((current) => ({ ...current, [key]: value }))
+  const resetFilters = () => setFilters({ course: '', termName: '', termYear: '', credits: '', grade: '', gpaStatus: '' })
+  return <>
+    <section className="courses-modebar"><div className="view-switch" aria-label="Course view"><button className={mode === 'timeline' ? 'active' : ''} onClick={() => setMode('timeline')}>Timeline</button><button className={mode === 'attempts' ? 'active' : ''} onClick={() => setMode('attempts')}>Attempts</button></div>{mode === 'timeline' && academicPlan && <div className="start-term-field"><span>Semester 1 started</span><TermPicker value={academicPlan.startTerm} onChange={updatePlanStartTerm} knownTerms={[academicPlan.startTerm, ...allAttempts.map((attempt) => attempt.term), ...academicPlan.entries.map((entry) => entry.plannedTerm)]} ariaLabel="Program start term" allowEmpty={false} /></div>}<span className="data-badge">{selectedPlan?.version ?? 'Select a plan'}</span></section>
+    <div className="courses-content-viewport">
+    {mode === 'timeline' ? timeline ? <AcademicTimeline timeline={timeline} /> : <section className="panel empty-state"><Route size={34} /><h3>Select a program first</h3><p>Choose your program and study-plan version in Report to compare the official sequence with all {allAttempts.length} transcript attempts.</p></section> : <section className="panel courses-panel">
     <div className="panel-heading"><div><p className="eyebrow">Audit trail</p><h2>{visibleAttempts.length} course attempts</h2></div><label className="search-field"><span className="sr-only">Search courses</span><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search course, term, or grade…" /></label></div>
-    <div className="prefix-filter" aria-label="Filter by course prefix"><button className={prefix === 'ALL' ? 'active' : ''} onClick={() => setPrefix('ALL')}>ALL</button>{prefixes.map((item) => <button className={prefix === item ? 'active' : ''} key={item} onClick={() => setPrefix(item)}>{item}</button>)}</div>
+    <div className="column-filters" role="group" aria-label="Course table filters">
+      <label className="course-column-filter"><span>Course code</span><select aria-label="Filter by course code" value={filters.course} onChange={(event) => setFilter('course', event.target.value)}><option value="">All codes</option>{courseCodeOptions.map((code) => <option value={code} key={code}>{code}</option>)}</select></label>
+      <label><span>Term name</span><select aria-label="Filter by term name" value={filters.termName} onChange={(event) => setFilter('termName', event.target.value)}><option value="">All terms</option>{termNameOptions.map((termName) => <option value={termName} key={termName}>{termName}</option>)}</select></label>
+      <label><span>Year</span><select aria-label="Filter by term year" value={filters.termYear} onChange={(event) => setFilter('termYear', event.target.value)}><option value="">All years</option>{termYearOptions.map((year) => <option value={year} key={year}>{year}</option>)}</select></label>
+      <label><span>Credits</span><select aria-label="Filter by credits" value={filters.credits} onChange={(event) => setFilter('credits', event.target.value)}><option value="">All credits</option>{creditOptions.map((credits) => <option value={credits} key={credits}>{credits}</option>)}</select></label>
+      <label><span>Grade</span><select aria-label="Filter by grade" value={filters.grade} onChange={(event) => setFilter('grade', event.target.value)}><option value="">All grades</option>{gradeFilterOptions.map((grade) => <option value={grade} key={grade}>{grade}</option>)}</select></label>
+      <label><span>GPA status</span><select aria-label="Filter by GPA status" value={filters.gpaStatus} onChange={(event) => setFilter('gpaStatus', event.target.value)}><option value="">All statuses</option><option value="included">Included</option><option value="excluded">Excluded</option></select></label>
+      <button type="button" className="reset-filters" disabled={!activeFilterCount} onClick={resetFilters}><RotateCcw size={14} /> Reset {activeFilterCount ? `(${activeFilterCount})` : ''}</button>
+    </div>
     {visibleAttempts.length ? <><div className="course-table-wrap"><table className="course-table"><thead><tr><th>Course</th><th>Term</th><th>Credits</th><th>Grade</th><th>Quality points</th><th>GPA status</th></tr></thead><tbody>{visibleAttempts.map((attempt) => <tr key={attempt.id}><td><strong>{attempt.fullCode}</strong><span>{attempt.title}</span></td><td>{attempt.term}</td><td>{attempt.credits.toFixed(1)}</td><td><span className={`grade-pill grade-${attempt.grade.replace('+', 'plus').toLowerCase()}`}>{attempt.grade}</span></td><td>{attempt.points.toFixed(2)}</td><td>{attempt.includedInGpa ? <span className="included"><Check size={14} /> Included</span> : <span className="excluded"><X size={14} /> Excluded</span>}</td></tr>)}</tbody></table></div>
       <div className="course-cards">{visibleAttempts.map((attempt) => <article key={attempt.id}><div><strong>{attempt.fullCode}</strong><span className={`grade-pill grade-${attempt.grade.replace('+', 'plus').toLowerCase()}`}>{attempt.grade}</span></div><h3>{attempt.title}</h3><p>{attempt.term} · {attempt.credits.toFixed(1)} credits · {attempt.includedInGpa ? 'Included in GPA' : 'Excluded from GPA'}</p></article>)}</div></> : <div className="empty-state"><BookOpen size={32} /><h3>No matching courses</h3><p>Choose another course prefix or clear the search.</p></div>}
-  </section>
+    </section>}
+    </div>
+  </>
 }
 
-function PlanView({ stats, targetCgpa, setTargetCgpa, futureCredits, setFutureCredits, target, selectedProgram, selectedPlan, progress }: {
+function PlanView({ stats, attempts, targetCgpa, setTargetCgpa, futureCredits, setFutureCredits, automaticFutureCredits, target, selectedProgram, selectedPlan, progress, academicPlan, updatePlanEntry }: {
   stats: ReturnType<typeof calculateStats>
+  attempts: CourseAttempt[]
   targetCgpa: number
   setTargetCgpa: (value: number) => void
   futureCredits: number
   setFutureCredits: (value: number) => void
+  automaticFutureCredits: number | null
   target: ReturnType<typeof solveTargetCgpa>
   selectedProgram?: UdSTProgram
   selectedPlan?: ProgramPlan
   progress: ReturnType<typeof programProgress> | null
+  academicPlan?: AcademicPlan
+  updatePlanEntry: (entryId: string, patch: Partial<{ courseCode: string; plannedTerm: string; expectedGrade: string }>) => void
 }) {
   const scenarios = [{ name: 'Conservative', gpa: 2.5 }, { name: 'Expected', gpa: 3 }, { name: 'Optimistic', gpa: 3.5 }]
   return <>
     <section className="planner-grid">
       <article className="panel target-panel"><div className="panel-heading"><div><p className="eyebrow">Target solver</p><h2>What average do you need?</h2></div><Target size={28} /></div>
-        <div className="input-pair"><label><span>Target CGPA</span><input type="number" min="0" max="4" step="0.05" value={targetCgpa} onChange={(e) => setTargetCgpa(Number(e.target.value))} /></label><label><span>Future credits</span><input type="number" min="1" max="180" value={futureCredits} onChange={(e) => setFutureCredits(Number(e.target.value))} /></label></div>
-        <div className={`solver-result ${target.feasibility}`}><span>Required future average</span><strong>{target.requiredGpa < 0 ? '0.00' : target.requiredGpa.toFixed(2)}</strong><b>{target.feasibility.replace('-', ' ')}</b></div>
-        <p className="formula">({targetCgpa.toFixed(2)} × {(stats.totalCredits + futureCredits).toFixed(1)} total credits − {stats.qualityPoints.toFixed(2)} current points) ÷ {futureCredits} future credits</p>
+        <div className="input-pair"><label><span>Target CGPA</span><input type="number" min="0" max="4" step="0.05" value={targetCgpa} onChange={(e) => setTargetCgpa(Number(e.target.value))} /></label><label><span>Future credits</span><div className="auto-credit-input"><input type="number" min="0" max="180" step="0.5" value={futureCredits} onChange={(e) => setFutureCredits(Number(e.target.value))} />{automaticFutureCredits !== null && futureCredits !== automaticFutureCredits && <button type="button" onClick={() => setFutureCredits(automaticFutureCredits)}>Use plan balance</button>}</div>{progress && <small className="plan-credit-source">Auto: {progress.requiredCredits.toFixed(1)} program credits − {progress.completedCredits.toFixed(1)} completed = {automaticFutureCredits?.toFixed(1)} remaining</small>}</label></div>
+        <div className={`solver-result ${futureCredits === 0 ? 'already-reached' : target.feasibility}`}><span>Required future average</span><strong>{futureCredits === 0 ? '—' : target.requiredGpa < 0 ? '0.00' : target.requiredGpa.toFixed(2)}</strong><b>{futureCredits === 0 ? 'program complete' : target.feasibility.replace('-', ' ')}</b></div>
+        <p className="formula">{futureCredits === 0 ? 'The selected study plan has no remaining matched credits.' : `(${targetCgpa.toFixed(2)} × ${(stats.totalCredits + futureCredits).toFixed(1)} total credits − ${stats.qualityPoints.toFixed(2)} current points) ÷ ${futureCredits} future credits`}</p>
       </article>
       <article className="panel scenarios-panel"><div className="panel-heading"><div><p className="eyebrow">Three paths</p><h2>Scenario comparison</h2></div></div>{scenarios.map((scenario) => { const projected = (stats.qualityPoints + futureCredits * scenario.gpa) / (stats.totalCredits + futureCredits); return <div className="scenario-row" key={scenario.name}><span><strong>{scenario.name}</strong><small>{scenario.gpa.toFixed(2)} future average</small></span><b>{projected.toFixed(2)}</b><i style={{ width: `${projected / 4 * 100}%` }} /></div> })}<p className="disclaimer">Projection assumes all future credits are GPA-bearing and does not replace UDST adviser approval.</p></article>
     </section>
     <section className="panel prerequisite-panel"><div className="panel-heading"><div><p className="eyebrow">Program sequence · {selectedPlan?.version ?? 'no plan selected'}</p><h2>{selectedProgram ? shortProgramName(selectedProgram) : 'Choose a program in Report'}</h2></div>{selectedPlan && <a href={selectedPlan.sourceUrl} target="_blank" rel="noreferrer">Official {selectedPlan.version} plan</a>}</div>
-      {!progress ? <div className="empty-state"><GraduationCap size={34} /><h3>No program selected</h3><p>Select your UDST program in Report to see completed requirements, courses you may be ready for, and prerequisite blockers.</p></div> : progress.courses.length === 0 ? <div className="review-alert"><AlertTriangle size={20} /><div><strong>Study plan not yet published</strong><p>UDST lists this new program, but its public page does not yet include a course table. Use the official link and confirm requirements with your adviser.</p></div></div> : <div className="progress-columns"><div><h3><CheckCircle2 size={18} /> Ready next</h3>{progress.readyNext.map((course) => <div className="requirement-row" key={`${course.code}-${course.title}`}><span><strong>{course.code}</strong><small>{course.title}</small></span><b>{course.credits} CR</b></div>)}</div><div><h3><LockKeyhole size={18} /> Prerequisite blockers</h3>{progress.blocked.map((course) => <div className="requirement-row locked" key={`${course.code}-${course.title}`}><span><strong>{course.code}</strong><small>{course.prerequisite || 'Prior requirement'}</small></span><b>{course.semester}</b></div>)}</div></div>}
+      {!progress ? <div className="empty-state"><GraduationCap size={34} /><h3>No program selected</h3><p>Select your UDST program in Report to see completed requirements, courses you may be ready for, and prerequisite blockers.</p></div> : progress.requirements.length === 0 ? <div className="review-alert"><AlertTriangle size={20} /><div><strong>Study plan not yet published</strong><p>UDST lists this new program, but its public page does not yet include a course table. Use the official link and confirm requirements with your adviser.</p></div></div> : <div className="progress-columns"><div><h3><CheckCircle2 size={18} /> Ready next</h3>{progress.readyNext.length ? progress.readyNext.map((requirement) => <div className="requirement-row" key={requirement.id}><span><strong>{requirement.kind === 'course' ? requirement.completedOptions[0]?.code || requirement.readyOptions[0]?.code : `Choose ${requirement.remainingCount}`}</strong><small>{requirement.label}</small></span><b>{requirement.creditsPerSlot} CR</b></div>) : <p className="empty-copy">No immediately ready requirements.</p>}</div><div><h3><LockKeyhole size={18} /> Prerequisite blockers</h3>{progress.blocked.length ? progress.blocked.map((requirement) => <div className="requirement-row locked" key={requirement.id}><span><strong>{requirement.kind === 'course' ? requirement.lockedOptions[0]?.code : `Elective · ${requirement.remainingCount} left`}</strong><small>{requirement.kind === 'course' ? requirement.lockedOptions[0]?.prerequisite || 'Prior requirement' : requirement.label}</small></span><b>{requirement.semester}</b></div>) : <p className="empty-copy">No parsed prerequisite blockers.</p>}</div></div>}
     </section>
+    {selectedPlan && academicPlan && <CourseGradePlanner stats={stats} plan={selectedPlan} attempts={attempts} academicPlan={academicPlan} targetCgpa={targetCgpa} onEntryChange={updatePlanEntry} />}
   </>
 }
 
-function ReportView({ stats, transcript, programs, selectedProgram, selectedPlan, planSelection, progress, programQuery, setProgramQuery, setProgram, setPlanVersion, useRecommendedPlan, exportCsv, exportJson }: {
+function ReportView({ stats, transcript, programs, selectedProgram, selectedPlan, planSelection, progress, timeline, projection, programQuery, setProgramQuery, setProgram, setPlanVersion, useRecommendedPlan, exportCsv, exportJson }: {
   stats: ReturnType<typeof calculateStats>
   transcript: TranscriptDocument
   programs: UdSTProgram[]
@@ -569,6 +701,8 @@ function ReportView({ stats, transcript, programs, selectedProgram, selectedPlan
   selectedPlan?: ProgramPlan
   planSelection: ReturnType<typeof selectProgramPlan> | null
   progress: ReturnType<typeof programProgress> | null
+  timeline?: ReturnType<typeof buildAcademicTimeline>
+  projection?: ReturnType<typeof calculatePlanProjection>
   programQuery: string
   setProgramQuery: (value: string) => void
   setProgram: (value: string) => void
@@ -593,12 +727,7 @@ function ReportView({ stats, transcript, programs, selectedProgram, selectedPlan
         </aside>
       </div>}
     </section>
-    <section className="report-paper">
-      <header><div><p>TRANSCRIPTIFY · UNOFFICIAL ACADEMIC REPORT</p><h2>{selectedProgram ? shortProgramName(selectedProgram) : 'UDST academic performance'}</h2></div><span>{selectedPlan ? `${selectedPlan.version} study plan` : 'No plan selected'}<br />Generated {new Date().toLocaleDateString('en-QA', { dateStyle: 'medium' })}</span></header>
-      <div className="report-summary"><div><span>Verified CGPA</span><strong>{stats.cgpa.toFixed(2)}</strong></div><div><span>GPA credits</span><strong>{stats.totalCredits.toFixed(1)}</strong></div><div><span>Course attempts</span><strong>{transcript.attempts.length}</strong></div><div><span>Plan complete</span><strong>{progress ? `${progress.percent}%` : '—'}</strong></div></div>
-      <div className="report-body"><section><h3>Academic standing</h3><p>Your calculated cumulative GPA is <strong>{stats.cgpa.toFixed(2)}</strong>. This {stats.cgpa >= 2 ? 'is within' : 'is below'} UDST’s published clear-standing range for undergraduate programs. The calculation includes {stats.totalCredits.toFixed(1)} GPA credits and excludes non-calculable grades and lower repeated attempts.</p></section><section><h3>Program alignment</h3><p>{selectedProgram && selectedPlan && progress ? `${progress.completedCredits.toFixed(1)} of ${progress.requiredCredits?.toFixed(1) ?? 'the published'} required credits match the ${selectedPlan.version} study plan. ${progress.readyNext.length} listed courses currently have parsed prerequisites satisfied.` : 'Select a program above to match completed coursework against its published study plan and prerequisites.'}</p></section></div>
-      <footer>Source: UDST public policies and program pages · Policy snapshot 16 Jul 2026 · Verify graduation eligibility and course registration with an academic adviser.</footer>
-    </section>
+    <DetailedAcademicReport stats={stats} attempts={transcript.attempts} program={selectedProgram} plan={selectedPlan} progress={progress} timeline={timeline} projection={projection} />
     <div className="export-row"><button className="secondary-button" onClick={exportCsv}><FileSpreadsheet size={18} /> Export CSV</button><button className="secondary-button" onClick={exportJson}><FileJson size={18} /> Export JSON</button><button className="primary-button" onClick={() => window.print()}><Printer size={18} /> Print report</button></div>
   </>
 }

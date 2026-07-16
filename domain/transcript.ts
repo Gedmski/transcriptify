@@ -50,7 +50,7 @@ export interface CourseAttempt {
 }
 
 export interface TranscriptDocument {
-  schemaVersion: 2
+  schemaVersion: 3
   institutionId: 'udst'
   adapterVersion: 'udst-2026.1'
   importedAt: string
@@ -60,6 +60,29 @@ export interface TranscriptDocument {
   verificationStatus: 'unreviewed' | 'warnings' | 'verified'
   attempts: CourseAttempt[]
   warnings: string[]
+  academicPlans?: Record<string, AcademicPlan>
+}
+
+export interface PlanEntry {
+  id: string
+  requirementId: string
+  slot: number
+  courseCode?: string
+  plannedTerm?: string
+  expectedGrade?: string
+}
+
+export interface AcademicPlan {
+  programId: string
+  planVersion: string
+  startTerm: string
+  entries: PlanEntry[]
+  manualRequirementMatches?: Record<string, string[]>
+  updatedAt: string
+}
+
+export type LegacyTranscriptDocument = Omit<TranscriptDocument, 'schemaVersion' | 'academicPlans'> & {
+  schemaVersion: 2
 }
 
 export interface TranscriptStats {
@@ -140,6 +163,27 @@ export function calculateTermStats(attempts: CourseAttempt[]) {
     })
 }
 
+export function calculateCumulativeTermStats(attempts: CourseAttempt[]) {
+  let credits = 0
+  let qualityPoints = 0
+  let priorTermGpa: number | null = null
+
+  return calculateTermStats(attempts).map((term) => {
+    credits += term.totalCredits
+    qualityPoints += term.qualityPoints
+    const cumulativeGpa = credits ? qualityPoints / credits : 0
+    const momentum = priorTermGpa === null
+      ? 'baseline'
+      : term.cgpa - priorTermGpa >= 0.2
+        ? 'improved'
+        : term.cgpa - priorTermGpa <= -0.2
+          ? 'declined'
+          : 'steady'
+    priorTermGpa = term.cgpa
+    return { ...term, cumulativeGpa, cumulativeCredits: credits, momentum }
+  })
+}
+
 export function calculatePrefixStats(attempts: CourseAttempt[]) {
   const included = attempts.filter((attempt) => attempt.includedInGpa && attempt.gradePoints !== null)
   const overall = calculateStats(included).cgpa
@@ -174,4 +218,17 @@ export function solveTargetCgpa(stats: TranscriptStats, target: number, futureCr
         ? 'already-reached'
         : 'achievable'
   return { requiredGpa, feasibility }
+}
+
+export function migrateTranscriptDocument(value: unknown): TranscriptDocument | null {
+  if (!value || typeof value !== 'object') return null
+  const candidate = value as Partial<Omit<TranscriptDocument, 'schemaVersion'>> & { schemaVersion?: number }
+  if (!Array.isArray(candidate.attempts) || candidate.institutionId !== 'udst') return null
+  if (candidate.schemaVersion !== 2 && candidate.schemaVersion !== 3) return null
+
+  return {
+    ...(candidate as TranscriptDocument),
+    schemaVersion: 3,
+    academicPlans: candidate.schemaVersion === 3 && candidate.academicPlans ? candidate.academicPlans : {},
+  }
 }

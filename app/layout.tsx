@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Sans, JetBrains_Mono, Patrick_Hand } from "next/font/google";
 import "./globals.css";
+import "@/components/landing/scrapbook.css";
 
 const patrickHand = Patrick_Hand({
   weight: "400",

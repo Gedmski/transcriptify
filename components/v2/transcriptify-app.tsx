@@ -25,7 +25,6 @@ import {
   Sparkles,
   Target,
   Trash2,
-  Upload,
   X,
 } from 'lucide-react'
 import { parseUdSTTranscript } from '@/domain/udst-parser'
@@ -47,6 +46,7 @@ import { ProgramDataset, ProgramPlan, UdSTProgram, programProgress, selectProgra
 import { academicPlanKey, buildAcademicTimeline, calculatePlanProjection, createAcademicPlan, remainingProgramCredits } from '@/domain/planning'
 import { AcademicTimeline, CourseFamilyRadar, CourseGradePlanner, DetailedAcademicReport } from './academic-analytics'
 import { TermPicker } from './term-combobox'
+import { ScrapbookLanding } from '@/components/landing/scrapbook-landing'
 
 type View = 'overview' | 'courses' | 'plan' | 'report' | 'privacy'
 type PersistenceMode = 'session' | 'device' | 'clear-after-export'
@@ -125,7 +125,6 @@ export function TranscriptifyApp() {
   const [targetCgpa, setTargetCgpa] = useState(3.2)
   const [futureCredits, setFutureCredits] = useState(30)
   const [programQuery, setProgramQuery] = useState('')
-  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     const storedMode = localStorage.getItem(MODE_KEY) as PersistenceMode | null
@@ -392,48 +391,14 @@ export function TranscriptifyApp() {
   }
 
   if (stage === 'import') {
-    return (
-      <main className="landing-shell">
-        <header className="landing-header">
-          <Brand />
-          <button className="text-button" onClick={() => setView('privacy')}><ShieldCheck size={17} /> Local by design</button>
-        </header>
-        <section className="hero-grid">
-          <div className="hero-copy">
-            <p className="eyebrow"><span>v2</span> UDST academic decision workspace</p>
-            <h1>Know where you stand.<br /><em>Plan what comes next.</em></h1>
-            <p className="hero-lede">Import your transcript privately, verify every course, and get a program-aware academic report grounded in official UDST rules.</p>
-            <div className="trust-row" aria-label="Privacy assurances">
-              <span><Check size={16} /> Runs in your browser</span>
-              <span><Check size={16} /> Editable before analysis</span>
-              <span><Check size={16} /> 83 UDST programs</span>
-            </div>
-          </div>
-          <div className="upload-board">
-            <div className="board-pin" />
-            <p className="board-kicker">Start with your transcript</p>
-            <button className="drop-target" onClick={() => fileInputRef.current?.click()} disabled={!!progress}>
-              <span className="upload-icon"><Upload size={28} /></span>
-              <strong>{progress || 'Choose a UDST transcript PDF'}</strong>
-              <span>{progress ? 'Keep this tab open — your file stays here.' : 'Text-based PDF · up to 15 MB · 50 pages'}</span>
-            </button>
-            <input ref={fileInputRef} className="sr-only" type="file" accept="application/pdf,.pdf" onChange={(event) => event.target.files?.[0] && handleFile(event.target.files[0])} />
-            {error && <div className="error-note" role="alert"><AlertTriangle size={18} /> {error}</div>}
-            <div className="or-divider"><span>or</span></div>
-            <button className="demo-button" onClick={() => { setTranscript(createDemoDocument()); setStage('dashboard') }}>
-              <Sparkles size={18} /> Explore with synthetic demo data <ArrowRight size={18} />
-            </button>
-          </div>
-        </section>
-        <section className="promise-strip">
-          <div><span>01</span><strong>Import</strong><p>Validate the PDF and extract course attempts locally.</p></div>
-          <div><span>02</span><strong>Verify</strong><p>Correct uncertain fields before any conclusions appear.</p></div>
-          <div><span>03</span><strong>Decide</strong><p>See standing, degree progress, and realistic GPA paths.</p></div>
-        </section>
-      </main>
-    )
+    return <ScrapbookLanding
+      attempts={createDemoDocument().attempts}
+      onDemo={() => { setTranscript(createDemoDocument()); setStage('dashboard') }}
+      onFile={handleFile}
+      progress={progress}
+      error={error}
+    />
   }
-
   if (stage === 'review' && transcript) {
     const warnings = transcript.attempts.filter((attempt) => attempt.validation !== 'verified').length
     return (
